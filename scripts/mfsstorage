@@ -1,0 +1,157 @@
+#!/bin/sh
+# $Id$
+
+# PROVIDE: mfsstorage
+# BEFORE: NETWORKING netif routing hostname
+# REQUIRE: mountcritlocal mdinit mfsbsd
+# KEYWORD: FreeBSD
+
+. /etc/rc.subr
+
+name="mfsstorage"
+start_cmd="mfsstorage_start"
+stop_cmd="mfsstorage_stop"
+store_cmd="mfsstorage_store"
+extra_commands="store"
+
+check_drive(){
+test -b $1 || exit 1
+}
+
+mount_storage_data() {
+	bindHome='/Data/_lm/'
+	for dirTObind in `ls -1 $bindHome`;
+	do
+	    echo "DBG codefile $codefile fileext $fileext"	
+	    codefile=$(echo "$dirTObind" | sed -e s/_/"\/"/g)
+	    fileext=$(echo "$dirTObind"  | awk -F'.' '{print $NF}')
+	    echo -n "check source dir $dirTObind is ..."
+	    if [ -d "${bindHome}/${dirTObind}" ];   then
+	      echo -n " dir, check for dest dir $dirTObind is ..."
+	      if [ -d "${codefile}" ]
+	      then 
+		  echo -n " exist"
+		  mkdir ${codefile}.sample
+		  mv ${codefile}/* ${codefile}.sample/
+	      else 
+		  echo -n " not exist, do create"
+		  mkdir -p ${codefile}
+	      fi
+	      fileext='_dir'  
+	    else   
+		  echo -n " a file"
+		  cp ${bindHome}/${dirTObind} ${codefile}
+	    fi
+	    
+	    case $fileext in
+	    "passwd")
+		echo " do passwd magick"
+		pwd_mkdb ${codefile}
+	    ;;
+	    "_dir")
+		echo " do loop mount ${bindHome}/${dirTObind} ${codefile}"
+		mount_nullfs ${bindHome}/${dirTObind} ${codefile}
+	    ;;
+	    *)
+		echo -n "*"
+	    ;;
+	    esac
+		
+	done
+}
+preserve_data(){
+	bindHome='/Data/_lm/'
+	cpwd=`pwd`
+
+	for dirpreserv in `cat /etc/permanent`
+	do
+	    encodefile=$(echo "$dirpreserv" | sed -e s/"\/"/_/g)
+	    
+	    if [ -d "${dirpreserv}" ]
+	    then 
+	      if [ -d "${bindHome}/${encodefile}" ]
+	      then 
+		echo "dir exist, Nothing to do"
+	      else
+		mkdir -p ${bindHome}/${encodefile}
+		cd ${dirpreserv} && find . -print | cpio -dump "${bindHome}${encodefile}"
+	      fi
+	    else if [ -f ${dirpreserv} ]; then
+		  cp ${dirpreserv} ${bindHome}${encodefile}
+		else
+		  echo "Nothing to store"
+		fi
+	    fi
+	done
+}
+
+mfsstorage_store(){
+	echo "permanent config store"
+	test -d /Data/_lm/ && preserve_data
+
+}
+
+mfsstorage_start()
+{
+	_datapool=`/bin/kenv -q mfsbsd.data.pool`
+	_backpool=`/bin/kenv -q mfsbsd.backup.pool`
+
+	_datadrive=`/bin/kenv -q mfsbsd.data.drive`
+	_backdrive=`/bin/kenv -q mfsbsd.backup.drive`
+	
+	#ommit check for pool exist
+	if [ -n "$_datapool" ]; then
+		zpool import -f -o altroot=/Data ${_datapool}
+	else if [ -n "$_datadrive" ]; then
+		#check_drive $_datadrive
+		test -d /Data || mkdir /Data
+		mount $_datadrive /Data
+#		mount_storage_data
+#		test -f /Data/.init.sh && /Data/.init.sh
+	      else
+		cat /etc/motd_no_disk >> /etc/motd
+		err 1 "No Data drive. Add to motd how to deal with it."
+	      fi  
+	fi
+	mount_storage_data
+	test -f /Data/.init.sh && /Data/.init.sh
+	
+	if [ -n "$_backpool" ]; then
+		zpool import -f -o altroot=/Backup ${_backpool}
+	else if [ -n "$_backdrive" ]; then
+		mount $_backdrive /Backup
+	     fi
+	fi
+}
+mfsstorage_stop(){
+	_datapool=`/bin/kenv -q mfsbsd.data.pool`
+	_backpool=`/bin/kenv -q mfsbsd.backup.pool`
+	
+	_datadrive=`/bin/kenv -q mfsbsd.data.drive`
+	_backdrive=`/bin/kenv -q mfsbsd.backup.drive`
+	
+	if [ -n "$_datapool" ]; then
+		preserve_data
+		zpool export $_datapool
+	else if [ -n "$_datadrive" ]; then
+		#check_drive $_datadrive
+#
+		preserve_data
+		umount $_datadrive /Data
+	      else
+		echo "No Data drive"
+	      fi  
+	fi
+	
+	if [ -n "$_backpool" ]; then
+		zpool export $_backpool
+	else if [ -n "$_backdrive" ]; then
+		mount $_backdrive /Backup
+	     fi
+	fi
+
+}
+
+load_rc_config $name
+run_rc_command "$1"
+
