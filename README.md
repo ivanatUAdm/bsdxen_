@@ -12,7 +12,7 @@ Build-time requirements
 
 Runtime requirements
 
-    a minimum of 1024MB system memory 8192MB and more higly reccomended
+    a minimum of 1024MB system memory, 8192MB and more higly recommended
 
 Other information
 
